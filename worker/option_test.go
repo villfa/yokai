@@ -1,6 +1,7 @@
 package worker_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/ankorstore/yokai/generate/uuid"
@@ -78,4 +79,52 @@ func TestWorkerExecutionOptionsWithMaxExecutionsAttempts(t *testing.T) {
 	worker.WithMaxExecutionsAttempts(2)(&opt)
 
 	assert.Equal(t, 2, opt.MaxExecutionsAttempts)
+}
+
+func TestWorkerExecutionOptionsWithMiddleware(t *testing.T) {
+	t.Parallel()
+
+	// Test adding a middleware to empty options
+	opt1 := worker.DefaultWorkerExecutionOptions()
+	worker.WithMiddleware(func(next worker.WorkerMiddlewareFunc) worker.WorkerMiddlewareFunc {
+		return func(ctx context.Context) error {
+			return next(ctx)
+		}
+	})(&opt1)
+
+	assert.Len(t, opt1.Middlewares, 1)
+
+	// Test adding a middleware to options with existing middlewares
+	opt2 := worker.DefaultWorkerExecutionOptions()
+
+	// Add first middleware directly
+	opt2.Middlewares = append(opt2.Middlewares, func(next worker.WorkerMiddlewareFunc) worker.WorkerMiddlewareFunc {
+		return func(ctx context.Context) error {
+			return next(ctx)
+		}
+	})
+
+	// Add second middleware using WithMiddleware
+	worker.WithMiddleware(func(next worker.WorkerMiddlewareFunc) worker.WorkerMiddlewareFunc {
+		return func(ctx context.Context) error {
+			return next(ctx)
+		}
+	})(&opt2)
+
+	assert.Len(t, opt2.Middlewares, 2)
+
+	// Test with nil middlewares slice
+	opt3 := worker.ExecutionOptions{
+		DeferredStartThreshold: 0,
+		MaxExecutionsAttempts:  1,
+		Middlewares:            nil,
+	}
+
+	worker.WithMiddleware(func(next worker.WorkerMiddlewareFunc) worker.WorkerMiddlewareFunc {
+		return func(ctx context.Context) error {
+			return next(ctx)
+		}
+	})(&opt3)
+
+	assert.Len(t, opt3.Middlewares, 1)
 }

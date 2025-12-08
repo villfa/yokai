@@ -214,7 +214,17 @@ func (p *WorkerPool) startWorkerRegistration(ctx context.Context, registration *
 
 		p.metrics.IncrementWorkerExecutionStart(registration.Worker().Name())
 
-		if err := registration.Worker().Run(ctx); err != nil {
+		// Apply middlewares to the worker's Run method
+		runFunc := registration.Worker().Run
+
+		// Apply middlewares in reverse order (last middleware is executed first)
+		for i := len(registration.Middlewares()) - 1; i >= 0; i-- {
+			middleware := registration.Middlewares()[i]
+			runFunc = middleware(runFunc)
+		}
+
+		// Execute the wrapped Run method
+		if err := runFunc(ctx); err != nil {
 			message = fmt.Sprintf(
 				"stopping execution attempt %d/%d with error: %v",
 				workerExecution.CurrentExecutionAttempt(),
@@ -273,6 +283,11 @@ func (p *WorkerPool) retrieveWorkerRegistrationExecution(registration *WorkerReg
 
 		for _, opt := range registration.Options() {
 			opt(&executionOptions)
+		}
+
+		// Apply middlewares from options to the worker registration
+		for _, middleware := range executionOptions.Middlewares {
+			registration.AddMiddleware(middleware)
 		}
 
 		p.executions[registration.Worker().Name()] = NewWorkerExecution(

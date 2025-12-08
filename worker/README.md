@@ -12,6 +12,7 @@
 * [Installation](#installation)
 * [Documentation](#documentation)
   * [Workers](#workers)
+  * [Middlewares](#middlewares)
   * [WorkerPool](#workerpool)
   * [Logging](#logging)
   * [Tracing](#tracing)
@@ -117,6 +118,129 @@ Notes:
 
 - to perform more complex tasks, you can inject dependencies to your workers implementation (ex: database, cache, etc.)
 - it is recommended to design your workers with a single responsibility
+
+### Middlewares
+
+This module provides middleware support for workers, allowing you to add cross-cutting concerns like logging, metrics, retries, or other behaviors without modifying the worker's core implementation.
+
+Middlewares wrap a worker's `Run` method and can perform actions before and after the worker execution, or even modify the execution flow.
+
+#### Using Middlewares
+
+You can register middlewares when creating a worker pool:
+
+```go
+package main
+
+import (
+	"context"
+	"time"
+
+	"github.com/ankorstore/yokai/worker"
+)
+
+// LoggingMiddleware is a custom middleware that logs worker execution
+func LoggingMiddleware() worker.WorkerMiddleware {
+	return func(next func(ctx context.Context) error) func(ctx context.Context) error {
+		return func(ctx context.Context) error {
+			workerName := worker.CtxWorkerName(ctx)
+
+			worker.CtxLogger(ctx).Info().
+				Str("worker", workerName).
+				Msg("worker execution started")
+
+			startTime := time.Now()
+
+			err := next(ctx)
+
+			duration := time.Since(startTime)
+
+			if err != nil {
+				worker.CtxLogger(ctx).Error().
+					Str("worker", workerName).
+					Dur("duration", duration).
+					Err(err).
+					Msg("worker execution failed")
+			} else {
+				worker.CtxLogger(ctx).Info().
+					Str("worker", workerName).
+					Dur("duration", duration).
+					Msg("worker execution completed successfully")
+			}
+
+			return err
+		}
+	}
+}
+
+func main() {
+	// create the pool with workers and middlewares
+	pool, _ := worker.NewDefaultWorkerPoolFactory().Create(
+		worker.WithWorker(
+			myWorker,
+			// Add custom logging middleware
+			worker.WithMiddleware(LoggingMiddleware()),
+		),
+	)
+
+	// start the pool
+	pool.Start(context.Background())
+}
+```
+
+
+#### Creating Custom Middlewares
+
+You can create your own middlewares by implementing the `worker.WorkerMiddleware` type:
+
+```go
+package main
+
+import (
+	"context"
+	"time"
+
+	"github.com/ankorstore/yokai/worker"
+)
+
+// MetricsMiddleware is a middleware that records metrics for worker executions
+func MetricsMiddleware(metricsClient MetricsClient) worker.WorkerMiddleware {
+	return func(next func(ctx context.Context) error) func(ctx context.Context) error {
+		return func(ctx context.Context) error {
+			workerName := worker.CtxWorkerName(ctx)
+
+			// Record execution start
+			metricsClient.IncrementCounter("worker_executions_total", map[string]string{
+				"worker": workerName,
+			})
+
+			startTime := time.Now()
+
+			err := next(ctx)
+
+			// Record execution duration
+			duration := time.Since(startTime)
+			metricsClient.RecordHistogram("worker_execution_duration_seconds", duration.Seconds(), map[string]string{
+				"worker": workerName,
+				"status": errorToStatus(err),
+			})
+
+			return err
+		}
+	}
+}
+
+func errorToStatus(err error) string {
+	if err == nil {
+		return "success"
+	}
+	return "error"
+}
+```
+
+#### Middleware Execution Order
+
+Middlewares are applied in the order they are registered, but executed in reverse order (last middleware is executed first). This allows for proper nesting of middleware behaviors.
 
 ### WorkerPool
 
